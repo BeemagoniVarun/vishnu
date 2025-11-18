@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>SRU query demo</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <style>
+    body { font-family: system-ui, Arial; margin: 20px; max-width: 800px; }
+    label, input, select, button { margin: 6px 0; display: block; }
+    .record { padding: 8px; border-bottom: 1px solid #ddd; }
+    .record h3 { margin: 0 0 4px 0; font-size: 1rem; }
+    .small { color: #555; font-size: 0.9rem; }
+    pre { background:#f6f6f6; padding:8px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <h1>SRU (searchRetrieve) demo</h1>
+
+  <p class="small">Enter a simple query (CQL) and click <strong>Search</strong>. Change the endpoint if needed.</p>
+
+  <label>SRU endpoint (change to your server):
+    <input id="endpoint" value="http://lx2.loc.gov:210/LCDB" style="width:100%" />
+  </label>
+
+  <label>Record schema:
+    <select id="schema">
+      <option value="info:srw/schema/1/dc-v1.1">DC (Dublin Core)</option>
+      <option value="mods">MODS</option>
+      <option value="marcxml">MARCXML</option>
+    </select>
+  </label>
+
+  <label>Query (CQL):
+    <input id="query" value="dc.title=dinosaur" style="width:100%" />
+  </label>
+
+  <label>Max records:
+    <input id="max" type="number" value="10" min="1" max="100" />
+  </label>
+
+  <button id="searchBtn">Search</button>
+
+  <h2>Results</h2>
+  <div id="results"><em>No query run yet.</em></div>
+
+  <h3>Raw Response (collapsed)</h3>
+  <pre id="raw" style="display:none; max-height:240px;"></pre>
+
+  <script>
+  const el = id => document.getElementById(id);
+
+  function buildSRUUrl(base, params) {
+    // Ensure base has no trailing ? or &
+    base = base.replace(/[?&]+$/,'');
+    const q = new URLSearchParams(params);
+    return base + '?' + q.toString();
+  }
+
+  async function runSearch() {
+    const base = el('endpoint').value.trim();
+    if (!base) return alert('Set the SRU endpoint.');
+
+    const params = {
+      version: '1.1',
+      operation: 'searchRetrieve',
+      query: el('query').value.trim(),
+      recordSchema: el('schema').value,
+      maximumRecords: el('max').value || 10
+    };
+
+    const url = buildSRUUrl(base, params);
+    el('results').innerHTML = '<em>Loading...</em>';
+    el('raw').style.display = 'none';
+    el('raw').textContent = '';
+
+    try {
+      // Use CORS-friendly proxy or ensure endpoint allows CORS when testing from browser.
+      const resp = await fetch(url, { method: 'GET' });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+
+      const text = await resp.text();
+      el('raw').textContent = text;
+      el('raw').style.display = 'block';
+
+      // Parse XML
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(text, 'application/xml');
+
+      // Check for diagnostics
+      const diag = doc.querySelector('diagnostic, diag\\:diagnostic');
+      if (diag) {
+        el('results').innerHTML = '<strong>Diagnostic/Error returned by server:</strong><pre>' + diag.textContent + '</pre>';
+        return;
+      }
+
+      // This example assumes Dublin Core (dc) schema. Adjust selectors for other schemas.
+      const records = Array.from(doc.getElementsByTagName('record'));
+      if (records.length === 0) {
+        el('results').innerHTML = '<em>No records found.</em>';
+        return;
+      }
+
+      const out = records.map(rec => {
+        const recordData = rec.getElementsByTagName('recordData')[0];
+        if (!recordData) return '';
+        // Look for dc:title and dc:creator (namespace prefixes may vary)
+        const title = recordData.querySelector('title, dc\\:title')?.textContent?.trim() || '— no title —';
+        const creator = recordData.querySelector('creator, dc\\:creator')?.textContent?.trim() || '';
+        return `<div class="record"><h3>${escapeHtml(title)}</h3>${creator ? `<div class="small">By: ${escapeHtml(creator)}</div>` : ''}</div>`;
+      }).join('');
+
+      el('results').innerHTML = out || '<em>No displayable record data found.</em>';
+    } catch (err) {
+      el('results').innerHTML = '<strong>Error:</strong> ' + escapeHtml(err.message);
+    }
+  }
+
+  function escapeHtml(s) {
+    return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  el('searchBtn').addEventListener('click', runSearch);
+  </script>
+</body>
+</html>
